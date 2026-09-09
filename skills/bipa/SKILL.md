@@ -82,34 +82,88 @@ curl -fsSL https://agents.bipa.app/install.sh | sh
 
 ## Authenticate
 
-Login now requires an explicit method flag:
+Login requires an explicit method flag and an agent identity. `--agent-name` is **required** (ask the user for your name if you don't know it); `--agent-kind` defaults to `other`.
 
 ```bash
 # OAuth login — prints URL for agent-friendly workflows
-bipa login --web
+bipa login --web --agent-name <NAME> --agent-kind <KIND>
 
 # OAuth login — opens browser automatically (human-friendly)
-bipa login --web --open
+bipa login --web --open --agent-name <NAME> --agent-kind <KIND>
 
 # PIN-based login via email (two-step)
-bipa login --pin --email user@example.com
+bipa login --pin --email user@example.com --agent-name <NAME> --agent-kind <KIND>
 bipa verify <PIN>
 
 # PIN-based login via phone
-bipa login --pin --phone "+55 11 99999 0000"
+bipa login --pin --phone "+55 11 99999 0000" --agent-name <NAME> --agent-kind <KIND>
 bipa verify <PIN>
 ```
 
+`--agent-kind` is the AI platform: `openclaw`, `claude`, `claude_code`, `chatgpt`, `codex`, `cursor`, `antigravity`, `grok`, `gemini`, `bipa`, or `other`.
+
 Running `bipa login` without flags prints a usage summary.
 
-For agents: prefer `--web` (prints the auth URL to stdout so you can present it to the user). For humans at the keyboard: use `--web --open`.
+Choosing a method:
+
+- **Headless / chat agents (e.g. OpenClaw):** use PIN — `bipa login --pin --email …` or `--phone …`, then relay the PIN via `bipa verify <PIN>`. You can't complete a browser flow, but you can relay a code the user reads back to you.
+- **Agents that can surface a URL:** `--web` prints the auth URL to stdout for you to present to the user.
+- **Humans at the keyboard:** `--web --open` opens the browser automatically.
 
 ### Check session status
 
 ```bash
 bipa whoami          # human-readable
-bipa whoami -f json  # includes expires_at, expires_in_seconds, auth_method
+bipa whoami -f json  # session_status, reauth_required, recommended_command, auth_method,
+                     # last_login_channel, last_login_hint, expires_at, expires_in_seconds
 ```
+
+Prefer `session_status` (`active` / `expired` / `none`) and `reauth_required` over reasoning about
+`expires_in_seconds` yourself. When `reauth_required` is true, `recommended_command` is the exact
+command to run.
+
+### Auth boundaries — CLI session vs. app connector
+
+There are **two independent sessions**, and reauthenticating one does **not** refresh the other:
+
+- **CLI session** — used by `bipa …` commands and the local `bipa mcp` server (they share the same
+  stored credentials). Recover it with `bipa login` / `bipa verify` as below.
+- **Hosted app connector** — a remote MCP connection managed by the client app (e.g. Claude/OpenClaw
+  connectors). When it errors with something like *"This app connection requires reauthentication"*,
+  that is the connector's own session. `bipa login`/`bipa verify` will **not** fix it — the user
+  must reauthenticate the connector inside the app that owns it.
+
+If you're unsure which one failed: `no active Bipa CLI session` / `Bipa CLI session expired` are the
+CLI session. Anything phrased as "app connection" / "connector" is the hosted connector.
+
+If `whoami` reports `reauth_required: true` with **no** `recommended_command`, the session came from
+the `BIPA_JWT` environment (not `bipa login`) and can't be recovered with a CLI command — it must be
+refreshed wherever that env var is set (the deployment/host), then the MCP server restarted.
+
+### Reauthenticate mid-session
+
+A tool call can fail with `no active Bipa CLI session` or `Bipa CLI session expired` when the CLI
+session lapses between requests. This is recoverable — don't abandon the task; reauthenticate and
+retry the original call. Don't guess the flow — `bipa whoami -f json` tells you exactly what to do:
+
+```json
+{ "session_status": "expired", "reauth_required": true,
+  "auth_method": "pin", "last_login_channel": "phone", "last_login_hint": "+••••0000",
+  "recommended_command": "bipa login --pin --phone +••••0000 --agent-name Amy --agent-kind openclaw && bipa verify <PIN>" }
+```
+
+1. Read `session_status` / `reauth_required`. If `reauth_required` is true, run the
+   `recommended_command` — it already encodes the right method (`--web` vs `--pin`) and, for PIN, the
+   **same channel the user last used** (`last_login_channel`), so you never guess email vs. phone.
+2. **OAuth** (`auth_method: oauth`): the command is `bipa login --web …` — present the printed URL to
+   the user and wait for them to finish in the browser.
+3. **PIN** (`auth_method: pin`): the PIN is delivered out-of-band to the user's `last_login_channel`.
+   The masked `last_login_hint` is a placeholder — confirm the full email/phone with the user if
+   needed. **Ask the user to read the PIN back to you**, then run `bipa verify <PIN>` within ~60s.
+4. Re-run the tool that originally failed.
+
+The PIN always goes to the human, never to you; your job is to trigger it and relay it via `bipa
+verify`.
 
 ## Set Up MCP for Claude Desktop
 
@@ -124,45 +178,103 @@ Remote MCP is also available at `https://mcp.bipa.app/mcp` with automatic OAuth 
 
 ## MCP Tools
 
+### Pix payments
+
 | Tool | Description |
 |---|---|
+| `bipa_pay` | Create a Pix transfer by `key` (+ `amount_cents`, `agent_message`). Optional `schedule` object (`date`, `frequency` = once/daily/weekly/monthly, `count`) for future or recurring payments. `bipa_pix_send` is an alias. For other destinations use `bipa_pix_pay_recipient` / `_tag` / `_trusted_contact` / `_brcode`. |
 | `bipa_pix_pay_key` | Send a Pix payment by key (lookup + transfer in one call). Use as fallback when recipient is not in saved list. |
 | `bipa_pix_recipient_suggestions` | List top 10 saved recipients. **Call this first** when the user wants to pay someone by name. |
 | `bipa_pix_pay_recipient` | Pay a saved recipient by `pix_payment_recipient_id` (from `bipa_pix_recipient_suggestions`). Skips Pix key lookup. |
 | `bipa_pix_trusted_contacts` | List pre-approved trusted contacts (payments skip biometric approval) |
 | `bipa_pix_pay_trusted_contact` | Pay a trusted contact by `pix_trusted_contact_id` (from `bipa_pix_trusted_contacts`). Instant settlement. |
-| `bipa_balance` | Current available balance in cents |
-| `bipa_history` | Transaction list (`limit?`, default 20, max 50) or detail by `id` |
-| `bipa_pix_brcode_decode` | Decode a Pix QR / Copia e Cola string (local, no auth) |
-| `bipa_pix_brcode_preview` | Preview a BR Code via server: returns recipient name, document, amount, and payment id |
-| `bipa_pix_pay_brcode` | Pay a BR Code (preview + transfer in one call) |
-| `bipa_deposit` | List deposit Pix keys |
-| `bipa_pix_keys` | List configured Pix keys |
-| `bipa_limits` | Transfer risk limits (daily and nightly) |
 | `bipa_pix_tag_preview` | Look up a BIPA user by tag (e.g. `$bipatag`) — confirm before paying |
 | `bipa_pix_pay_tag` | Pay a BIPA user by tag |
+| `bipa_pix_brcode_decode` | Decode a Pix QR / Copia e Cola string (local, no auth) |
+| `bipa_pix_brcode_preview` | Preview a BR Code via server: returns recipient name, document, amount, and payment id |
+| `bipa_pix_pay_brcode` | Pay a BR Code (preview + transfer in one call). For `fixed` codes omit `amount_cents`; for `custom` codes pass it. |
+| `bipa_pix_brcode_encode` | Generate a static Pix Copia e Cola payload from a registered key (+ optional fixed amount). Server-issued, reconciles incoming payments back to the agent. Each call mints a fresh idempotency key — calling twice with the same args creates two distinct BR Codes; cache the response instead of retrying. |
+| `bipa_pix_brcode_encode_widget` | Render the QR widget for a BR Code that was just generated. Pass the full output of `bipa_pix_brcode_encode`. |
+
+### Bank slips & bills (boletos)
+
+| Tool | Description |
+|---|---|
+| `bipa_bank_slip_preview` | Preview a bank slip (boleto) from its digitable line or barcode: recipient, amount, kind (static/dynamic), due date. Dynamic slips return `min_amount`/`max_amount`. Read-only; does NOT pay. |
+| `bipa_pay_bank_slip` | Submit a bank slip payment **request**. Does NOT pay directly — creates a pending approval (`status: awaiting_user_approval`, `approval_id`) the user must authorize in the Bipa app. Pass the line/barcode in `input`; for `custom` slips pass `amount_cents` within min/max, for `fixed` slips omit it. |
+| `bipa_dda_list` | List the DDA (Débito Direto Autorizado) bank slips registered to the user — boletos delivered into Bipa so they can be reviewed without typing the barcode. Each item has `id`, `status` (overdue/due/paid/canceled), `recipient`, `amount`, `due_date`. Read-only; empty when the user isn't subscribed to DDA. |
+
+### Account, balance & history
+
+| Tool | Description |
+|---|---|
+| `bipa_balance` | Current available balance and savings ("cofrinho"/"caixinha") balance (formatted BRL strings) |
+| `bipa_limits` | Transfer risk limits (daily and nightly) |
+| `bipa_deposit` | List deposit Pix keys |
+| `bipa_pix_keys` | List configured Pix keys |
 | `bipa_account` | Account profile and metadata |
 | `bipa_whoami` | Session status (includes auth method and expiry) |
+| `bipa_history` | Pix transaction list (`limit?`, default 20, max 50) or detail by `id` |
+| `bipa_transactions` | Multi-asset compact transaction list (BRL, BTC, USDT). Most recent up to `limit` (default 20, max 50). |
+| `bipa_transaction_detail` | Detailed info for a specific multi-asset transaction by `id` |
+| `bipa_timeline` | Unified activity timeline across all assets and event layers. Supports search, layer filtering, cursor pagination. |
+
+### Prices & portfolio
+
+| Tool | Description |
+|---|---|
+| `bipa_tickers` | Current BTC/BRL, USDT/BRL, and BTC/USDT bid/ask prices |
+| `bipa_btc_prices` | BTC/BRL historical price series |
+| `bipa_usdt_prices` | USDT/BRL historical price series |
+| `bipa_portfolio` | Portfolio summary (P&L, trade stats, balance history) for a given asset and period |
+
+> Most data tools above have a `_widget` counterpart (e.g. `bipa_balance_widget`). Widget tools are hidden from the model and exist only for app-side rendering — call the plain data tool; the host app calls the widget with that tool's output when it needs to render UI.
 
 ## CLI Commands
 
 ```
+# Pix payments (one destination flag: --key | --brcode | --tag | --trusted-contact | --recipient)
 bipa pix pay --key <PIX_KEY> --amount <BRL> --agent-message "reason" [--note "memo"]
 bipa pix pay --key <PIX_KEY> --amount-cents <CENTS> --agent-message "reason"
 bipa pix pay --brcode <COPIA_E_COLA> [--amount <BRL>] --agent-message "reason"
+bipa pix pay --tag <BIPA_TAG> --amount <BRL> --agent-message "reason"
 bipa pix pay --trusted-contact <ID> --amount <BRL> --agent-message "reason"
 bipa pix pay --recipient <ID> --amount <BRL> --agent-message "reason"
+# Scheduled / recurring (add to any pix pay)
+bipa pix pay --key <PIX_KEY> --amount <BRL> --agent-message "reason" \
+  --schedule-date 2026-07-01 --schedule-frequency monthly --schedule-count 12
+
+# Read state
 bipa pix balance
 bipa pix history [--limit N] [TRANSACTION_ID]
-bipa pix brcode <BRCODE_STRING>
 bipa pix keys
 bipa pix deposit
 bipa pix limits
 bipa pix recipient-suggestions
 bipa pix trusted-contacts
 bipa pix account
+bipa pix brcode decode <BRCODE_STRING>
+bipa pix brcode encode --key <PIX_KEY> [--amount <BRL>]
+
+# Bank slips / boletos (alias: bipa boleto ...)
+bipa bank-slip preview <DIGITABLE_LINE_OR_BARCODE>
+bipa bank-slip pay <DIGITABLE_LINE_OR_BARCODE> [--amount-cents <CENTS>]
+
+# DDA (registered boletos)
+bipa dda list
+
+# Prices, portfolio & multi-asset views
+bipa prices tickers          # alias: bipa cotacao tickers
+bipa prices btc
+bipa prices usdt
+bipa portfolio               # alias: bipa carteira
+bipa timeline                # alias: bipa extrato-geral
+bipa transactions            # alias: bipa transacoes
+bipa transaction <ID>        # alias: bipa transacao
+
+# Session & misc
 bipa whoami
-bipa login --web [--open]
+bipa login --web [--open] --agent-name <NAME> [--agent-kind <KIND>]
 bipa logout
 bipa skill
 ```
@@ -342,12 +454,62 @@ BIPA tags are user nicknames starting with `$` (e.g. `$bipatag`).
 }
 ```
 
+### Pay a Bank Slip (Boleto)
+
+User shares a digitable line or barcode.
+
+1. `bipa_bank_slip_preview` with the line/barcode in `input` → returns recipient, amount, `kind` (static/dynamic), due date. Dynamic slips also return `min_amount`/`max_amount`.
+2. Show the user recipient + amount + due date.
+3. `bipa_pay_bank_slip` with `input` (and `amount_cents` only for `custom`/dynamic slips). This creates a **payment request** — the response is `status: awaiting_user_approval` with an `approval_id`. Tell the user to open the Bipa app and approve it.
+
+**CLI:**
+```bash
+bipa bank-slip preview "<DIGITABLE_LINE>"
+bipa bank-slip pay "<DIGITABLE_LINE>"                 # static (fixed) slip
+bipa bank-slip pay "<DIGITABLE_LINE>" --amount-cents 5000   # dynamic slip, partial amount
+```
+
+### Review Registered Bills (DDA)
+
+DDA (Débito Direto Autorizado) delivers a subscribed user's boletos into Bipa so they can be reviewed without typing barcodes.
+
+1. `bipa_dda_list` → each bill has `id`, `status` (overdue/due/paid/canceled), `recipient`, `amount`, `due_date`. Returns an empty list when the user isn't subscribed to DDA.
+2. Summarize what's due/overdue. To pay one, use the bill's barcode with the bank-slip flow above.
+
+**CLI:** `bipa dda list`
+
+### Schedule a Payment
+
+Any `bipa_pay` call accepts a `schedule` object for future or recurring transfers.
+
+```json
+{
+  "name": "bipa_pay",
+  "arguments": {
+    "key": "joao@email.com",
+    "amount_cents": 5000,
+    "agent_message": "User asked to pay rent on the 1st each month",
+    "schedule": { "date": "2026-07-01", "frequency": "monthly", "count": 12 }
+  }
+}
+```
+
+`frequency` is one of `once`, `daily`, `weekly`, `monthly`; `count` is the number of executions (default 1). CLI: `--schedule-date`, `--schedule-frequency`, `--schedule-count`.
+
+### Prices & Portfolio
+
+- `bipa_tickers` → current BTC/BRL, USDT/BRL, BTC/USDT bid/ask.
+- `bipa_btc_prices` / `bipa_usdt_prices` → historical price series for charts.
+- `bipa_portfolio` → P&L, trade stats, and balance history for an asset and period.
+
+**CLI:** `bipa prices tickers`, `bipa prices btc`, `bipa prices usdt`, `bipa portfolio`
+
 ### Financial Snapshot
 
-1. `bipa_balance` → `available_cents`
+1. `bipa_balance` → `available` and `savings` (cofrinho), formatted BRL
 2. `bipa_history` (limit: 20) → recent transactions with `direction` (credit/debit), amounts, counterparty names, timestamps (BRT)
 
-Present a clean summary: balance in R$, last transactions grouped by direction.
+Present a clean summary: available and cofrinho balances in R$, last transactions grouped by direction.
 
 ### Detect Recurring / Duplicate Transactions
 
@@ -369,12 +531,13 @@ Present a clean summary: balance in R$, last transactions grouped by direction.
 | `amount_cents must be greater than zero` | Check amount conversion |
 | `agent_message is required` | Always include why the agent is paying |
 | `rate limit exceeded` | Wait `retry_after_seconds` then retry |
-| `no active Bipa CLI session` | Run `bipa login --web` |
-| `session expired` | Run `bipa login --web` again |
+| `no active Bipa CLI session` | Reauthenticate, then retry — see [Reauthenticate mid-session](#reauthenticate-mid-session) |
+| `session expired` | Reauthenticate, then retry — see [Reauthenticate mid-session](#reauthenticate-mid-session) |
 
 ## Transaction Statuses
 
-- `awaiting_approval` — waiting for user approval in Bipa app
+- `awaiting_approval` — Pix payment waiting for user approval in Bipa app
+- `awaiting_user_approval` — bank slip (boleto) payment request waiting for in-app approval
 - `scheduled` — approved, queued for settlement
 - `succeeded` / `confirmed` — settled
 - `pending` — in progress
@@ -386,7 +549,7 @@ Present a clean summary: balance in R$, last transactions grouped by direction.
 - All amounts in BRL. MCP uses cents (integer). CLI accepts BRL decimals and cents.
 - Transactions show `credit` (in) and `debit` (out) directions.
 - Timestamps in BRT (UTC-3).
-- Rate limits: 5 payments/min, 20 brcode decodes/min.
+- Rate limits: payment tools (Pix pay, BR Code pay, bank slip pay) share a 5/min bucket; preview/decode tools (BR Code decode/encode/preview, bank slip preview) each have their own 20/min bucket.
 - Credentials stored in OS keychain (macOS Keychain, Windows Credential Manager).
 - Transaction details include structured `sections` with labeled fields for full receipt info.
-- Bipa CLI currently supports Pix. Bitcoin, stablecoins (USDC/USDT), and Lightning are coming soon via the same Bipa infrastructure.
+- Payments via Bipa CLI are Pix and bank slips/boletos (including DDA-registered bills). It also exposes read-only multi-asset views: BTC/USDT balances, prices, portfolio, and a unified timeline. Crypto swaps/sends are not yet available via MCP.
