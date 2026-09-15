@@ -181,26 +181,26 @@ Remote MCP is also available at `https://mcp.bipa.app/mcp` with automatic OAuth 
 
 | Tool | Description |
 |---|---|
-| `bipa_pay` | Create a Pix transfer by `key` (+ `amount_cents`, `agent_message`). Optional `schedule` object (`date`, `frequency` = once/daily/weekly/monthly, `count`) for future or recurring payments. `bipa_pix_send` is an alias. For other destinations use `bipa_pix_pay_recipient` / `_tag` / `_trusted_contact` / `_brcode`. |
+| `bipa_pay` | Submit a Pix payment request by `key` (+ `amount_cents`, `agent_message`); inspect its status rather than assuming completion. Optional `schedule` object (`date`, `frequency` = once/daily/weekly/monthly, `count`) for future or recurring payments. For other destinations use `bipa_pix_pay_recipient` / `_tag` / `_trusted_contact` / `_brcode`. |
 | `bipa_pix_pay_key` | Send a Pix payment using a supplied key (lookup + transfer in one call). |
 | `bipa_pix_recipient_suggestions` | List top 10 saved recipients with `account:read`. Use when the recipient must be discovered; supplied IDs or PIX keys do not require this lookup. |
 | `bipa_pix_pay_recipient` | Pay a saved recipient using a known `pix_payment_recipient_id` supplied by the user or prior authorized context. Discovery through `bipa_pix_recipient_suggestions` requires `account:read`. |
 | `bipa_pix_trusted_contacts` | List pre-approved trusted contacts with `account:read` (payments skip biometric approval) |
 | `bipa_pix_pay_trusted_contact` | Pay a trusted contact using a known `pix_trusted_contact_id` supplied by the user or prior authorized context. Discovery through `bipa_pix_trusted_contacts` requires `account:read`. Uses existing delegation without fresh approval; inspect the returned status, including manual review or failure. |
 | `bipa_pix_payment_status` | Read a PIX outflow request using `request_id` set to the returned `outflow_request_id`. Supports pending approval; schedule IDs, boleto/DDA approval IDs and history transaction IDs are different identifiers. |
-| `bipa_pix_tag_preview` | Look up a BIPA user by tag (e.g. `$bipatag`) — confirm before paying |
+| `bipa_pix_tag_preview` | Resolve a BIPA user by tag (e.g. `$bipatag`) and create a server-side preparation record. Does not submit an outgoing payment. |
 | `bipa_pix_pay_tag` | Pay a BIPA user by tag |
 | `bipa_pix_brcode_decode` | Decode a Pix QR / Copia e Cola string (local, no auth) |
-| `bipa_pix_brcode_preview` | Preview a BR Code via server: returns recipient name, document, amount, and payment id |
+| `bipa_pix_brcode_preview` | Resolve a BR Code and persist a server-side preview record with recipient, amount and payment id. Does not submit an outgoing payment. |
 | `bipa_pix_pay_brcode` | Pay a BR Code (preview + transfer in one call). For `fixed` codes omit `amount_cents`; for `custom` codes pass it. |
-| `bipa_pix_brcode_encode` | Generate a static Pix Copia e Cola payload from a registered key (+ optional fixed amount). Server-issued, reconciles incoming payments back to the agent. Each call mints a fresh idempotency key — calling twice with the same args creates two distinct BR Codes; cache the response instead of retrying. |
+| `bipa_pix_brcode_encode` | Generate a static Pix Copia e Cola payload from a registered key (+ optional fixed amount). Registers an additive receivable record and reconciles incoming payments back to the agent. Currently authorized through the `account:read` capability; this does not grant outgoing-payment authority. Each call mints a fresh idempotency key — calling twice with the same args creates two distinct BR Codes; cache the response instead of retrying. |
 | `bipa_pix_brcode_encode_widget` | Render the QR widget for a BR Code that was just generated. Pass the full output of `bipa_pix_brcode_encode`. |
 
 ### Bank slips & bills (boletos)
 
 | Tool | Description |
 |---|---|
-| `bipa_bank_slip_preview` | Preview a bank slip (boleto) from its digitable line or barcode: recipient, amount, kind (static/dynamic), due date. Dynamic slips return `min_amount`/`max_amount`. Read-only; does NOT pay. |
+| `bipa_bank_slip_preview` | Preview a bank slip (boleto) from its digitable line or barcode: recipient, amount, kind (static/dynamic), due date. Dynamic slips return `min_amount`/`max_amount`. Persists server-side decoding/preparation records; does not submit an outgoing payment. |
 | `bipa_pay_bank_slip` | Request a boleto payment using `input`, `agent_message` and a retained `idempotency_key`. Accepted requests return `awaiting_user_approval` and `approval_id` for in-app approval. For `custom` slips pass `amount_cents` within min/max; for `fixed` slips omit it. |
 | `bipa_dda_list` | With `financial:read`, list registered DDA bills with `id`, `status`, `recipient`, exact `amount_cents`, `amount` and `due_date`. Read `subscription_state` separately; an empty list alone does not establish enrollment. |
 | `bipa_dda_pay` | Request a bill payment using a known `id` supplied by the user or prior authorized context, optional `amount_cents`, `agent_message` and optional `idempotency_key`. Returns an approval ID when supported; unavailable server RPCs return `capability_unavailable`. |
@@ -209,7 +209,7 @@ Remote MCP is also available at `https://mcp.bipa.app/mcp` with automatic OAuth 
 
 | Tool | Description |
 |---|---|
-| `bipa_balance` | Current available balance and savings ("cofrinho"/"caixinha") balance (formatted BRL strings) |
+| `bipa_balance` | BRL, BTC and USDT wallet balances plus separate BRL savings ("cofrinho"/"caixinha"), with exact units and display strings |
 | `bipa_limits` | Transfer risk limits (daily and nightly) |
 | `bipa_deposit` | List deposit Pix keys |
 | `bipa_pix_keys` | List configured Pix keys |
@@ -527,10 +527,10 @@ Any `bipa_pay` call accepts a `schedule` object for future or recurring transfer
 
 ### Financial Snapshot
 
-1. `bipa_balance` → `available` and `savings` (cofrinho), formatted BRL
+1. `bipa_balance` → `brl.total`, `btc.total`, `usdt.total` for wallet balances, and `brl.savings` for separate cofrinho savings. Use `brl.total_cents`, `btc.total_sats` and `usdt.total_usdtmicros` for exact calculations.
 2. `bipa_history` (limit: 20) → recent transactions with `direction` (credit/debit), amounts, counterparty names, timestamps (BRT)
 
-Present a clean summary: available and cofrinho balances in R$, last transactions grouped by direction.
+Present wallet balances by asset, cofrinho savings separately, and recent transactions grouped by direction. The `available` fields preserve legacy card-related server values and can be zero for accounts without cards. Payment endpoints determine funds, limits and authorization; a balance snapshot alone does not establish payment eligibility.
 
 ### Detect Recurring / Duplicate Transactions
 
@@ -575,7 +575,7 @@ Present a clean summary: available and cofrinho balances in R$, last transaction
 - All amounts in BRL. MCP uses cents (integer). CLI accepts BRL decimals and cents.
 - Transactions show `credit` (in) and `debit` (out) directions.
 - Timestamps in BRT (UTC-3).
-- Rate limits: payment tools (Pix pay, BR Code pay, bank slip pay) share a 5/min bucket; preview/decode tools (BR Code decode/encode/preview, bank slip preview) each have their own 20/min bucket.
+- Rate limits per server instance: payment submissions (Pix, boleto and DDA) share a 5/min bucket; BR Code decode/encode/preview, tag preview and bank slip preview each have their own 20/min bucket.
 - Credentials use the OS keychain by default on macOS/Windows; Linux defaults to a file. `BIPA_CREDENTIALS_PATH` selects an explicit file store for unattended agents. Failed keychain reads or writes preserve the selected storage and report an error; `bipa doctor --agent` reports `storage_kind` without exposing tokens or opening the keychain.
 - Transaction details include available structured `sections`. Complete receipt linkage from every payment request remains unavailable.
 - Payments via Bipa CLI are Pix and bank slips/boletos (including DDA-registered bills). It also exposes read-only multi-asset views: BTC/USDT balances, prices, portfolio, and a unified timeline. Crypto swaps/sends are not yet available via MCP.
