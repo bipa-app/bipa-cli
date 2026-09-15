@@ -182,11 +182,11 @@ Remote MCP is also available at `https://mcp.bipa.app/mcp` with automatic OAuth 
 | Tool | Description |
 |---|---|
 | `bipa_pay` | Create a Pix transfer by `key` (+ `amount_cents`, `agent_message`). Optional `schedule` object (`date`, `frequency` = once/daily/weekly/monthly, `count`) for future or recurring payments. `bipa_pix_send` is an alias. For other destinations use `bipa_pix_pay_recipient` / `_tag` / `_trusted_contact` / `_brcode`. |
-| `bipa_pix_pay_key` | Send a Pix payment by key (lookup + transfer in one call). Use as fallback when recipient is not in saved list. |
-| `bipa_pix_recipient_suggestions` | List top 10 saved recipients. **Call this first** when the user wants to pay someone by name. |
-| `bipa_pix_pay_recipient` | Pay a saved recipient by `pix_payment_recipient_id` (from `bipa_pix_recipient_suggestions`). Skips Pix key lookup. |
-| `bipa_pix_trusted_contacts` | List pre-approved trusted contacts (payments skip biometric approval) |
-| `bipa_pix_pay_trusted_contact` | Pay a trusted contact by `pix_trusted_contact_id` (from `bipa_pix_trusted_contacts`). Uses existing delegation without fresh approval; inspect the returned status, including manual review or failure. |
+| `bipa_pix_pay_key` | Send a Pix payment using a supplied key (lookup + transfer in one call). |
+| `bipa_pix_recipient_suggestions` | List top 10 saved recipients with `account:read`. Use when the recipient must be discovered; supplied IDs or PIX keys do not require this lookup. |
+| `bipa_pix_pay_recipient` | Pay a saved recipient using a known `pix_payment_recipient_id` supplied by the user or prior authorized context. Discovery through `bipa_pix_recipient_suggestions` requires `account:read`. |
+| `bipa_pix_trusted_contacts` | List pre-approved trusted contacts with `account:read` (payments skip biometric approval) |
+| `bipa_pix_pay_trusted_contact` | Pay a trusted contact using a known `pix_trusted_contact_id` supplied by the user or prior authorized context. Discovery through `bipa_pix_trusted_contacts` requires `account:read`. Uses existing delegation without fresh approval; inspect the returned status, including manual review or failure. |
 | `bipa_pix_payment_status` | Read a PIX outflow request using `request_id` set to the returned `outflow_request_id`. Supports pending approval; schedule IDs, boleto/DDA approval IDs and history transaction IDs are different identifiers. |
 | `bipa_pix_tag_preview` | Look up a BIPA user by tag (e.g. `$bipatag`) — confirm before paying |
 | `bipa_pix_pay_tag` | Pay a BIPA user by tag |
@@ -202,8 +202,8 @@ Remote MCP is also available at `https://mcp.bipa.app/mcp` with automatic OAuth 
 |---|---|
 | `bipa_bank_slip_preview` | Preview a bank slip (boleto) from its digitable line or barcode: recipient, amount, kind (static/dynamic), due date. Dynamic slips return `min_amount`/`max_amount`. Read-only; does NOT pay. |
 | `bipa_pay_bank_slip` | Request a boleto payment using `input`, `agent_message` and a retained `idempotency_key`. Accepted requests return `awaiting_user_approval` and `approval_id` for in-app approval. For `custom` slips pass `amount_cents` within min/max; for `fixed` slips omit it. |
-| `bipa_dda_list` | List registered DDA bills with `id`, `status`, `recipient`, exact `amount_cents`, `amount` and `due_date`. Read `subscription_state` separately; an empty list alone does not establish enrollment. |
-| `bipa_dda_pay` | Request a listed bill payment using `id`, optional `amount_cents`, `agent_message` and optional `idempotency_key`. Returns an approval ID when supported; unavailable server RPCs return `capability_unavailable`. |
+| `bipa_dda_list` | With `financial:read`, list registered DDA bills with `id`, `status`, `recipient`, exact `amount_cents`, `amount` and `due_date`. Read `subscription_state` separately; an empty list alone does not establish enrollment. |
+| `bipa_dda_pay` | Request a bill payment using a known `id` supplied by the user or prior authorized context, optional `amount_cents`, `agent_message` and optional `idempotency_key`. Returns an approval ID when supported; unavailable server RPCs return `capability_unavailable`. |
 
 ### Account, balance & history
 
@@ -300,7 +300,7 @@ Pass the key in any common format — normalization is handled internally.
 
 ## Critical Rules
 
-1. **Check saved recipients first.** When the user asks to pay someone by name, always call `bipa_pix_recipient_suggestions` first. If the person is in the list, use `bipa_pix_pay_recipient` — it's faster and avoids Pix key lookup. Only fall back to `bipa_pix_pay_key` (with a Pix key) when no saved recipient matches.
+1. **Discover recipients only when needed and permitted.** Use a supplied recipient ID, trusted-contact ID, or PIX key directly with the corresponding payment tool and its required payment permission. When the target must be discovered and `account:read` is granted, use the appropriate recipient/contact list. Without discovery permission, ask for a known ID or PIX key; a catalog read is not a prerequisite for submitting that payment.
 
 2. **`bipa_pix_pay_key` includes recipient lookup.** `bipa_pix_pay_key` resolves the recipient automatically. Never try to look up a Pix key separately before paying.
 
@@ -390,13 +390,13 @@ bipa pix pay --brcode "<COPIA_E_COLA>" --amount 50 --agent-message "Custom amoun
 
 ### Pay a Trusted Contact
 
-Trusted contacts use the existing server delegation without a fresh approval. A submission may still be pending, fail or require manual review; use the returned `outflow_request_id` to query the PIX status.
+Trusted contacts use the existing server delegation without a fresh approval and require `payments:execute_trusted`. With a supplied trusted-contact ID, call the payment tool directly. The discovery sequence below applies only when the ID must be found and `account:read` is granted. A submission may still be pending, fail or require manual review; use the returned `outflow_request_id` to query the PIX status.
 
 1. `bipa_pix_trusted_contacts` → list all enabled contacts with `id`, `name`, `document_masked`, `limit_cents`, and bank details
 2. Find the right contact and confirm with the user
 3. `bipa_pix_pay_trusted_contact` with `pix_trusted_contact_id`, `amount_cents`, and `agent_message`
 
-**MCP:**
+**MCP discovery (when needed, with `account:read`):**
 ```json
 {
   "name": "bipa_pix_trusted_contacts",
@@ -404,6 +404,7 @@ Trusted contacts use the existing server delegation without a fresh approval. A 
 }
 ```
 
+**MCP payment with a supplied ID:**
 ```json
 {
   "name": "bipa_pix_pay_trusted_contact",
@@ -418,7 +419,7 @@ Trusted contacts use the existing server delegation without a fresh approval. A 
 
 ### Pay a Saved Recipient (Preferred for Repeat Payments)
 
-When the user asks to pay someone by name (not by Pix key), check their saved recipients first. This is faster than a Pix key lookup and covers most "pay X" requests.
+A supplied recipient ID or PIX key can be used directly with the corresponding payment-request tool and `payments:request`. The discovery sequence below applies only when the target must be found and `account:read` is granted.
 
 1. `bipa_pix_recipient_suggestions` → returns the user's top 10 most frequent/recent PIX recipients
 2. Match by `name` or `bank_name` — confirm with the user ("Is this João at Nubank?")
@@ -426,7 +427,7 @@ When the user asks to pay someone by name (not by Pix key), check their saved re
 
 If no match is found in the suggestions list, fall back to `bipa_pix_pay_key` with the user's Pix key.
 
-**MCP:**
+**MCP discovery (when needed, with `account:read`):**
 ```json
 {
   "name": "bipa_pix_recipient_suggestions",
@@ -434,6 +435,7 @@ If no match is found in the suggestions list, fall back to `bipa_pix_pay_key` wi
 }
 ```
 
+**MCP payment with a supplied ID:**
 ```json
 {
   "name": "bipa_pix_pay_recipient",
@@ -489,7 +491,7 @@ bipa bank-slip pay "<DIGITABLE_LINE>" --amount-cents 5000   # dynamic slip, part
 
 ### Review Registered Bills (DDA)
 
-DDA (Débito Direto Autorizado) delivers a subscribed user's boletos into Bipa so they can be reviewed without typing barcodes.
+DDA (Débito Direto Autorizado) delivers a subscribed user's boletos into Bipa so they can be reviewed without typing barcodes. Inventory review requires `financial:read`. A supplied bill ID can be passed directly to `bipa_dda_pay` with `payments:request` without listing the inventory.
 
 1. `bipa_dda_list` → inspect bills and the separate `subscription_state`; an empty list does not establish enrollment.
 2. Summarize what is due or overdue. If requested, call `bipa_dda_pay` with the bill `id`, `agent_message` and a retained `idempotency_key`; accepted requests return an `approval_id` for the Bipa app. A missing server capability is not authorization to substitute another payment path.
