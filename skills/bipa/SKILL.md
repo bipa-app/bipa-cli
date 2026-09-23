@@ -91,13 +91,13 @@ bipa login --web --agent-name <NAME> --agent-kind <KIND>
 # OAuth login — opens browser automatically (human-friendly)
 bipa login --web --open --agent-name <NAME> --agent-kind <KIND>
 
-# PIN-based login via email (two-step)
-bipa login --pin --email user@example.com --agent-name <NAME> --agent-kind <KIND>
-bipa verify <PIN>
+# Headless OAuth — user approves the pairing code in the Bipa app (employee pilot)
+bipa login --device --agent-name <NAME> --agent-kind <KIND>
 
-# PIN-based login via phone
-bipa login --pin --phone "+55 11 99999 0000" --agent-name <NAME> --agent-kind <KIND>
-bipa verify <PIN>
+# If the agent cannot wait for approval, resume the saved request later
+bipa login --device --no-wait --agent-name <NAME> --agent-kind <KIND>
+bipa login --device --resume --agent-name <NAME> --agent-kind <KIND>
+bipa login --device --cancel --agent-name <NAME> --agent-kind <KIND>
 ```
 
 `--agent-kind` is the AI platform: `openclaw`, `claude`, `claude_code`, `chatgpt`, `codex`, `cursor`, `antigravity`, `grok`, `gemini`, `bipa`, or `other`.
@@ -106,7 +106,7 @@ Running `bipa login` without flags prints a usage summary.
 
 Choosing a method:
 
-- **Headless / chat agents (e.g. OpenClaw):** use PIN — `bipa login --pin --email …` or `--phone …`, then relay the PIN via `bipa verify <PIN>`. You can't complete a browser flow, but you can relay a code the user reads back to you.
+- **Headless / chat agents (e.g. OpenClaw):** use `--device` and ask the user to approve the pairing code in the Bipa app. During the pilot, this is available to employees and employee-owned business accounts. Remote non-employee users can temporarily use `bipa login --pin --phone <PHONE> --agent-name <NAME> --agent-kind <KIND>` followed by `bipa verify <PIN>`; the user should provide only the login code, never the app PIN.
 - **Agents that can surface a URL:** `--web` prints the auth URL to stdout for you to present to the user.
 - **Humans at the keyboard:** `--web --open` opens the browser automatically.
 
@@ -127,7 +127,7 @@ command to run.
 There are **two independent sessions**, and reauthenticating one does **not** refresh the other:
 
 - **CLI session** — used by `bipa …` commands and the local `bipa mcp` server (they share the same
-  stored credentials). Recover it with `bipa login` / `bipa verify` as below.
+  stored credentials). Recover it with the reported `bipa login` command.
 - **Hosted app connector** — a remote MCP connection managed by the client app (e.g. Claude/OpenClaw
   connectors). When it errors with something like *"This app connection requires reauthentication"*,
   that is the connector's own session. `bipa login`/`bipa verify` will **not** fix it — the user
@@ -147,22 +147,17 @@ session lapses between requests. Reauthenticate using the reported recovery meth
 
 ```json
 { "session_status": "expired", "reauth_required": true,
-  "auth_method": "pin", "last_login_channel": "phone", "last_login_hint": "+••••0000",
-  "recommended_command": "bipa login --pin --phone +••••0000 --agent-name Amy --agent-kind openclaw && bipa verify <PIN>" }
+  "auth_method": "oauth", "last_login_channel": null, "last_login_hint": null,
+  "recommended_command": "bipa login --device --agent-name Amy --agent-kind openclaw" }
 ```
 
 1. Read `session_status` / `reauth_required`. If `reauth_required` is true, run the
-   `recommended_command` — it already encodes the right method (`--web` vs `--pin`) and, for PIN, the
-   **same channel the user last used** (`last_login_channel`), so you never guess email vs. phone.
-2. **OAuth** (`auth_method: oauth`): the command is `bipa login --web …` — present the printed URL to
-   the user and wait for them to finish in the browser.
-3. **PIN** (`auth_method: pin`): the PIN is delivered out-of-band to the user's `last_login_channel`.
-   The masked `last_login_hint` is a placeholder — confirm the full email/phone with the user if
-   needed. **Ask the user to read the PIN back to you**, then run `bipa verify <PIN>` within ~60s.
+   `recommended_command` — it preserves the recorded login flow. A first connection uses public browser OAuth; eligible headless users can choose device OAuth, and existing PIN connections retain their previous channel.
+2. **OAuth** (`auth_method: oauth`): follow the reported `--device` or `--web` command. For `--device`, present the pairing code and ask the user to approve it in Bipa; never request the app PIN.
+3. **Existing PIN connection** (`auth_method: pin`): follow the reported legacy command using the previous email or phone channel. Confirm the full identifier with the user if needed.
 4. Re-run failed reads. For payment submissions, inspect the existing operation before deciding whether another submission is appropriate; reconnecting does not establish whether the earlier payment was accepted.
 
-The PIN always goes to the human, never to you; your job is to trigger it and relay it via `bipa
-verify`.
+The app PIN stays with the human and is entered only in Bipa.
 
 ## Set Up MCP for Claude Desktop
 
