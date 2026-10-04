@@ -91,11 +91,11 @@ bipa login --web --agent-name <NAME> --agent-kind <KIND>
 # OAuth login — opens browser automatically (human-friendly)
 bipa login --web --open --agent-name <NAME> --agent-kind <KIND>
 
-# Headless OAuth — user approves the pairing code in the Bipa app (employee pilot)
-bipa login --device --agent-name <NAME> --agent-kind <KIND>
+# Headless OAuth — Bipa sends the user a mobile approval notification (employee pilot)
+bipa login --device --phone <PHONE> --agent-name <NAME> --agent-kind <KIND>
 
 # If the agent cannot wait for approval, resume the saved request later
-bipa login --device --no-wait --agent-name <NAME> --agent-kind <KIND>
+bipa login --device --phone <PHONE> --no-wait --agent-name <NAME> --agent-kind <KIND>
 bipa login --device --resume --agent-name <NAME> --agent-kind <KIND>
 bipa login --device --cancel --agent-name <NAME> --agent-kind <KIND>
 ```
@@ -148,12 +148,12 @@ session lapses between requests. Reauthenticate using the reported recovery meth
 ```json
 { "session_status": "expired", "reauth_required": true,
   "auth_method": "oauth", "last_login_channel": null, "last_login_hint": null,
-  "recommended_command": "bipa login --device --agent-name Amy --agent-kind openclaw" }
+  "recommended_command": "bipa login --device --phone <PHONE> --agent-name Amy --agent-kind openclaw" }
 ```
 
 1. Read `session_status` / `reauth_required`. If `reauth_required` is true, run the
    `recommended_command` — it preserves the recorded login flow. A first connection uses public browser OAuth; eligible headless users can choose device OAuth, and existing PIN connections retain their previous channel.
-2. **OAuth** (`auth_method: oauth`): follow the reported `--device` or `--web` command. For `--device`, present the pairing code and ask the user to approve it in Bipa; never request the app PIN.
+2. **OAuth** (`auth_method: oauth`): follow the reported `--device` or `--web` command. For `--device`, get the user's Bipa phone, replace `<PHONE>`, and start the request. Ask the user to open Bipa's notification and review the connection; present the code or verification URL only when the notification is unavailable. Never request the app PIN.
 3. **Existing PIN connection** (`auth_method: pin`): follow the reported legacy command using the previous email or phone channel. Confirm the full identifier with the user if needed.
 4. Re-run failed reads. For payment submissions, inspect the existing operation before deciding whether another submission is appropriate; reconnecting does not establish whether the earlier payment was accepted.
 
