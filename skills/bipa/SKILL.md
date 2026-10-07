@@ -226,7 +226,7 @@ CLI `bipa pix history --agent` and MCP `bipa_history` list/detail outputs includ
 | `bipa_usdt_prices` | USDT/BRL historical price series |
 | `bipa_portfolio` | Portfolio summary (P&L, trade stats, balance history) for a given asset and period |
 
-> Most data tools above have a `_widget` counterpart (e.g. `bipa_balance_widget`). Widget tools are hidden from the model and exist only for app-side rendering — call the plain data tool; the host app calls the widget with that tool's output when it needs to render UI.
+> Most data tools above have a `_widget` counterpart (e.g. `bipa_balance_widget`). In hosts that render MCP Apps, such as claude.ai and ChatGPT, show the data result to the person by passing it unchanged to the matching widget tool. In text-only hosts, answer from the data tool. Widget tools never fetch new data or submit payments.
 
 ## CLI Commands
 
