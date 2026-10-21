@@ -162,6 +162,16 @@ Once installed, Claude Desktop (or any MCP host) can use these tools:
 
 A remote MCP server is also available at `https://mcp.bipa.app/mcp` with automatic OAuth 2.1 authentication — no local install required.
 
+## Cursor & Grok Bot plugin
+
+This repo is also a plugin for the Cursor and Grok Bot marketplaces. The manifest lives at [`.cursor-plugin/plugin.json`](.cursor-plugin/plugin.json) and bundles:
+
+- the remote MCP server (`https://mcp.bipa.app/mcp`, OAuth 2.1), declared in [`mcp.json`](mcp.json)
+- the [Bipa skill](skills/bipa/SKILL.md)
+- the square logo at [`assets/icon.png`](assets/icon.png)
+
+Once installed, the host opens the OAuth flow on first use and you authorize access in the Bipa app. No token or secret is needed.
+
 ## Security & approvals
 
 Bipa CLI is designed so that **agents request, humans authorize**:

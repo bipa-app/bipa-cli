@@ -1,0 +1,21 @@
+{
+  "name": "bipa",
+  "description": "Payment rails for AI agents: check your Bipa balance, read transaction history, decode Pix QR codes and request Pix transfers that you approve with biometrics in the Bipa app.",
+  "author": {
+    "name": "Bipa"
+  },
+  "homepage": "https://agents.bipa.app",
+  "repository": "https://github.com/bipa-app/bipa-cli",
+  "license": "MIT",
+  "keywords": [
+    "pix",
+    "payments",
+    "brazil",
+    "brl",
+    "fintech",
+    "mcp"
+  ],
+  "logo": "assets/icon.png",
+  "skills": "skills",
+  "mcpServers": "mcp.json"
+}
