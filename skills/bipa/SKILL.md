@@ -21,7 +21,7 @@ Opening a Bipa account is free, takes ~5 minutes, and gives them access to:
 - **Free Pix account** — send/receive instant BRL transfers 24/7
 - **Buy & sell Bitcoin** — directly from the app
 - **BTC/USDT/BRL collateralized credit card** — works with Apple Pay / Google Pay
-- **Crypto rails** — Polygon, Ethereum, Bitcoin, Lightning Network
+- **Crypto rails** — Bitcoin, Lightning Network, Ethereum, Polygon, Solana, XRP Ledger, Base and BNB Smart Chain, for BTC, USDT, ETH, SOL, USDC and XRP
 
 There are two paths to create a Bipa account:
 
@@ -77,7 +77,7 @@ Now the user can log in to Bipa CLI and connect their agent. After this, they on
 
 ```bash
 # Managed installer (recommended for users and agents)
-curl -fsSL https://agents.bipa.app/install.sh | sh
+curl -fsSL https://agents.bipa.app/install.sh | bash
 ```
 
 ## Authenticate
@@ -109,6 +109,32 @@ Choosing a method:
 - **Headless / chat agents (e.g. OpenClaw):** use `--device` and ask the user to approve the pairing code in the Bipa app. During the pilot, this is available to employees and employee-owned business accounts. Remote non-employee users can temporarily use `bipa login --pin --phone <PHONE> --agent-name <NAME> --agent-kind <KIND>` followed by `bipa verify <PIN>`; the user should provide only the login code, never the app PIN.
 - **Agents that can surface a URL:** `--web` prints the auth URL to stdout for you to present to the user.
 - **Humans at the keyboard:** `--web --open` opens the browser automatically.
+
+### PF and PJ accounts
+
+A person who owns a company can connect both their personal (PF) and business (PJ) accounts to the
+same agent. Log in once per account and choose the account during sign-in (`bipa verify --account pf|pj`
+for PIN logins). Each login is saved next to the accounts already saved; it never replaces them.
+
+```bash
+bipa accounts -f json          # saved accounts: account (user_id, account_kind, display_name),
+                               # default, session_status, select_with, issues; unfiled_login
+bipa pix balance --account pj  # act on a saved account: pf, pj, or a USER_ID
+BIPA_ACCOUNT=pj bipa pix history  # same, from the environment
+bipa accounts use pj           # make the PJ the default for commands without --account
+bipa logout --account pj       # sign out of and forget only the PJ
+```
+
+`unfiled_login: true` means a login finished but Bipa could not confirm its account, so it was not
+saved; run the login again. `bipa login` itself takes no `--account`: the account is the one chosen
+during sign-in. A finished login reports where it was saved on stderr only; run `bipa accounts -f json` to read it.
+Run one login at a time; a second login started before the first finishes
+replaces its pending request. `BIPA_ACCOUNT` applies only to commands that act on an account, and
+`bipa mcp install` pins an account only from an explicit `--account`.
+
+Commands without `--account` act on the default account (the first one connected). When the user
+has more than one account saved, confirm which one they mean before any payment and pass
+`--account` explicitly. `whoami -f json` reports the `account` a session acts on.
 
 ### Check session status
 
@@ -168,6 +194,17 @@ bipa mcp install --client claude
 
 The MCP server reuses saved credentials. No tokens in config files.
 
+To give one agent both the PF and the PJ, install one local server per saved account:
+
+```bash
+bipa mcp install --client claude --account pf   # server mcpsrv_bipa_pf
+bipa mcp install --client claude --account pj   # server mcpsrv_bipa_pj
+```
+
+Each server is pinned to its account by user id, states that account in its instructions, and
+reports it in `bipa_whoami`. Use the server for the account the user means. A hosted connector
+connection acts on the single account chosen when it was authorized.
+
 Remote MCP is also available at `https://mcp.bipa.app/mcp` with automatic OAuth 2.1 (for Claude.ai, ChatGPT, Cursor, VS Code, and other remote-capable clients).
 
 ## MCP Tools
@@ -204,9 +241,9 @@ Remote MCP is also available at `https://mcp.bipa.app/mcp` with automatic OAuth 
 
 | Tool | Description |
 |---|---|
-| `bipa_balance` | BRL, BTC and USDT wallet balances plus separate BRL savings ("cofrinho"/"caixinha"), with exact units and display strings |
+| `bipa_balance` | BRL, BTC and USDT wallet balances plus separate BRL savings ("cofrinho"/"caixinha"), with exact units and display strings; nonzero ETH, SOL, USDC and XRP holdings in `other_assets` |
 | `bipa_limits` | Transfer risk limits (daily and nightly) |
-| `bipa_deposit` | List deposit Pix keys |
+| `bipa_deposit` | Where to deposit: the Pix keys (default, or asset `brl`), or a crypto address on one network. btc on bitcoin; usdt on ethereum or polygon; eth on ethereum; sol on solana; usdc on ethereum, polygon, solana, base or bsc; xrp on xrp with a `destination_tag`. `network` is required for usdt and usdc |
 | `bipa_pix_keys` | List configured Pix keys |
 | `bipa_account` | Account profile and metadata |
 | `bipa_whoami` | Session status (includes auth method and expiry) |
@@ -221,12 +258,78 @@ CLI `bipa pix history --agent` and MCP `bipa_history` list/detail outputs includ
 
 | Tool | Description |
 |---|---|
-| `bipa_tickers` | Current BTC/BRL, USDT/BRL, and BTC/USDT bid/ask prices |
-| `bipa_btc_prices` | BTC/BRL historical price series |
-| `bipa_usdt_prices` | USDT/BRL historical price series |
-| `bipa_portfolio` | Portfolio summary (P&L, trade stats, balance history) for a given asset and period |
+| `bipa_tickers` | Current bid/ask prices for BTC, USDT, ETH, SOL, USDC and XRP against BRL, and BTC/USDT in USDT |
+| `bipa_prices` | Historical price series for one asset (btc, usdt, eth, sol, usdc or xrp); with `candle_hours` (1–168), also buy-price candles over that window |
+| `bipa_btc_prices` | BTC/BRL historical price series (the same as `bipa_prices` with asset btc) |
+| `bipa_usdt_prices` | USDT/BRL historical price series (the same as `bipa_prices` with asset usdt) |
+| `bipa_portfolio` | Portfolio summary (P&L, trade stats, balance history) for one asset (btc, usdt, eth, sol, usdc or xrp) and a period |
+| `bipa_portfolio_overview` | The whole crypto wallet's value in reais over a period, now and per bucket. Bipa opens it account by account (`code: portfolio_overview_unavailable` otherwise) |
 
 > Most data tools above have a `_widget` counterpart (e.g. `bipa_balance_widget`). In hosts that render MCP Apps, such as claude.ai and ChatGPT, show the data result to the person by passing it unchanged to the matching widget tool. In text-only hosts, answer from the data tool. Widget tools never fetch new data or submit payments.
+
+## Bipa Business (business API key)
+
+A company on Bipa Business can give an agent a **business API key** instead of a `bipa login`. It
+reaches one business account through the public Business API v1. It is separate from the PF/PJ
+session: different commands, a different MCP server, and its own permissions.
+
+```bash
+bipa business login <BUSINESS_ACCOUNT_ID>   # the user types the key at a hidden prompt; or --key-stdin
+bipa business whoami -f json                # environment, account, key hint, financial:read check
+bipa mcp install --business                 # MCP server mcpsrv_bipa_business with bipa_business_* tools
+```
+
+- A member creates the key in Bipa Business (Configurações › Desenvolvedores › Chaves) and picks its
+  permissions there. Never ask for the key in chat, never pass it as an argument, never echo it.
+- The API does not report a key's permissions. A `403 permission_denied` means the key lacks the
+  permission **or** the business account id is wrong; say both.
+- **A key never approves a payment.** `bipa business requests create` /
+  `bipa_business_payment_request_create` only asks for one. Always tell the user it waits for a
+  member's approval in Bipa Business; no money leaves before that.
+- Pay in three steps: preview (`preview pix|boleto`, `bipa_business_pix_preview` /
+  `bipa_business_boleto_preview`), confirm recipient and amount with the user, create with the
+  `preview_id`. Follow with `requests get|wait` (`bipa_business_payment_request[_wait]`); cancel with
+  `requests cancel` while it is pending.
+- Keep the `idempotency_key` a write returns. After a timeout or 5xx, retry the same write with the
+  same key (`--idempotency-key`, or the `idempotency_key` input); never with changed details.
+- MCP amounts are BRL cents in, `{min_units, decimal_scale}` out, with `display` when the asset is known. Decide on the error `code`.
+- **Conversions, accepting a target order and savings movements run at once, with no approval.**
+  Payments still wait for an approver; these do not. The key's creator chose its permissions:
+  `conversions:execute` allows converting and accepting target orders, `savings:manage` allows
+  moving savings (cofrinho). Without them the tools answer `permission_denied`.
+  - Convert: `bipa_business_conversion_quote`, show the person what they pay, receive and the fee,
+    then `bipa_business_conversion_create` with the quote's `conversion_idempotency_key`, the
+    quote's asset, side, amount and recurrence (pass the recurrence to the quote too), its
+    `counter_amount` min_units as `counter_limit_min_units`, and `confirmed_amount` equal to the
+    amount sent.
+  - Target order: `bipa_business_target_order_create` (it reserves nothing), confirm the terms, then
+    `bipa_business_target_order_accept` with the `order_id`, the same details, the
+    `idempotency_key` create returned and `confirmed_amount`. Accepting reserves the funds. If the
+    key is refused as not recorded or too old, call create again with the same details and the same
+    key, then accept; never make a new order for it.
+  - Savings: `bipa_business_savings` returns a `deposit_idempotency_key` and a
+    `withdraw_idempotency_key`; confirm the amount, then `bipa_business_savings_deposit` or
+    `_withdraw` with the matching key and `confirmed_amount {brl_cents}`.
+  - Each key works only for the terms it was issued for, in this session, for 30 minutes. If a
+    move timed out, retry it with the same key; if the key was refused as unknown, check
+    `bipa_business_statement_entries` and `bipa_business_orders` before quoting again.
+  - Send `confirmed_amount` only after the person confirmed that exact amount. A mismatch is refused
+    and nothing is sent. In the CLI (`convert create`, `target-order create --accept`,
+    `savings deposit|withdraw`) the person confirms with y/N in their terminal; never pass `--yes`
+    for them.
+- Receiving needs no approval and sends nothing: `links create|deactivate`
+  (`bipa_business_payment_link_create` / `_deactivate`), `deposit-address`
+  (`bipa_business_deposit_address_request`). Confirm the title, methods and amount first. Cancel a
+  recurring or target order with `cancel-order` (`bipa_business_order_cancel`).
+- There is no sandbox for business keys yet: `--sandbox` fails. Every call is production.
+- The key is not tied to a person and outlives the member who made it. When someone leaves, a member
+  revokes the key in Bipa Business; `bipa business logout` only forgets it on this computer.
+
+Reads: `balances`, `address`, `statement list|get|export`, `monthly list|request|file`,
+`income-report`, `orders`, `links list|get|payment`, `pix-keys`, `counterparties`, `banks`,
+`trusted-counterparties`, `requests list`, `assistant enrollment|boletos|boleto`, `savings`,
+`limits` — all under `bipa business`, all with `-f json`. Files are CLI-only. Guide:
+`docs/BUSINESS_API.md`.
 
 ## CLI Commands
 
@@ -250,7 +353,8 @@ bipa pix history [--limit N] [--cursor CURSOR] [TRANSACTION_ID]
 bipa pix status <OUTFLOW_REQUEST_ID>
 bipa pix wait <OUTFLOW_REQUEST_ID> [--timeout-seconds 60]
 bipa pix keys
-bipa pix deposit
+bipa pix deposit                              # Pix keys
+bipa pix deposit --asset usdc --network base  # crypto address on one network
 bipa pix limits
 bipa pix recipient-suggestions
 bipa pix trusted-contacts
@@ -277,7 +381,9 @@ bipa transaction <ID>        # alias: bipa transacao
 # Session & misc
 bipa whoami
 bipa login --web [--open] --agent-name <NAME> [--agent-kind <KIND>]
-bipa logout
+bipa accounts                # saved PF/PJ accounts; `bipa accounts use <pf|pj|USER_ID>`
+bipa <command> --account pj  # any command on a saved account other than the default
+bipa logout [--account pj]
 bipa skill
 ```
 
@@ -512,17 +618,27 @@ Any `bipa_pay` call accepts a `schedule` object for future or recurring transfer
 
 `frequency` is one of `once`, `daily`, `weekly`, `monthly`; `count` is the number of executions (default 1). CLI: `--schedule-date`, `--schedule-frequency`, `--schedule-count`. A `schedule_approval_id` still awaits in-app approval; a `schedule_id` identifies a created schedule. Follow schedules in Bipa. Only an actual `outflow_request_id` can be queried with `bipa_pix_payment_status`.
 
+### Crypto deposits
+
+- `bipa_deposit` with `asset` and `network` → the address that receives that asset on that network. Repeat the asset and network to the person: another asset, or the same asset on another network, can be lost.
+- XRP: always give both `address` and `destination_tag`. Bipa shares the address across accounts, so a deposit without the tag is not credited.
+- An error with `code: app_session_only` means Bipa doesn't serve deposit addresses to CLI and agent sessions yet. The session is fine: say the Bipa app shows the address, and don't ask the person to sign in again. `code: deposit_network_unavailable` means that network isn't taking deposits right now; offer another network the asset arrives on. `code: business_account` means a company's crypto deposit addresses aren't served here (its Pix keys still are); `code: not_open_to_account` means that asset's deposits aren't open to this account yet. `code: account_unavailable` means the account can't receive deposits: point the person to Bipa support, not to another network or a new sign-in.
+
+**CLI:** `bipa pix deposit --asset <asset> [--network <network>]`
+
 ### Prices & Portfolio
 
-- `bipa_tickers` → current BTC/BRL, USDT/BRL, BTC/USDT bid/ask.
-- `bipa_btc_prices` / `bipa_usdt_prices` → historical price series for charts.
-- `bipa_portfolio` → P&L, trade stats, and balance history for an asset and period.
+- `bipa_tickers` → current bid/ask for every listed pair (`tickers[].pair`, such as `btc_brl`, `eth_brl` or `btc_usdt`).
+- `bipa_prices` → historical price series for charts, for any of the six assets. Pass `candle_hours` for candles: they need a signed-in session, and when this session can't read them `candles.status` is `unavailable` with a `reason` (`app_session_only` or `sign_in_required`) while the series still answer. `bipa_btc_prices` and `bipa_usdt_prices` are the same for BTC and USDT.
+- `bipa_portfolio` → P&L, trade stats, and balance history for an asset and period. Read quantities from `asset_balance_amount` and `asset_quantity_amount`; the integer `asset_balance` and `asset_quantity` are smallest units for BTC and USDT only, and zero for ETH, SOL, USDC and XRP.
 
-**CLI:** `bipa prices tickers`, `bipa prices btc`, `bipa prices usdt`, `bipa portfolio`
+- `bipa_portfolio_overview` → the whole wallet in reais over a period. When it answers `code: portfolio_overview_unavailable`, it isn't open to this account yet: say so, and offer `bipa_portfolio` for each asset instead.
+
+**CLI:** `bipa prices tickers`, `bipa prices history <asset> [--candle-hours N]`, `bipa prices btc`, `bipa prices usdt`, `bipa portfolio --asset <asset>`, `bipa portfolio --overview [--period <period>]`
 
 ### Financial Snapshot
 
-1. `bipa_balance` → `brl.total`, `btc.total`, `usdt.total` for wallet balances, and `brl.savings` for separate cofrinho savings. Use `brl.total_cents`, `btc.total_sats` and `usdt.total_usdtmicros` for exact calculations.
+1. `bipa_balance` → `brl.total`, `btc.total`, `usdt.total` for wallet balances, and `brl.savings` for separate cofrinho savings. Use `brl.total_cents`, `btc.total_sats` and `usdt.total_usdtmicros` for exact calculations. Other holdings (ETH, SOL, USDC, XRP) appear in `other_assets` with `total` and the exact `total_min_units`/`decimal_scale`; they carry no BRL value unless `total_brl` is present.
 2. `bipa_history` (limit: 20) → recent transactions with `direction` (credit/debit), amounts, counterparty names, timestamps (BRT)
 
 Present wallet balances by asset, cofrinho savings separately, and recent transactions grouped by direction. The `available` fields preserve legacy card-related server values and can be zero for accounts without cards. Payment endpoints determine funds, limits and authorization; a balance snapshot alone does not establish payment eligibility.
@@ -549,6 +665,9 @@ Present wallet balances by asset, cofrinho savings separately, and recent transa
 | `rate limit exceeded` | Respect `retry_after_seconds`; inspect an uncertain payment outcome before resubmitting |
 | `no active Bipa CLI session` | Reauthenticate, then retry reads; reconcile uncertain payments — see [Reauthenticate mid-session](#reauthenticate-mid-session) |
 | `session expired` | Reauthenticate, then retry reads; reconcile uncertain payments — see [Reauthenticate mid-session](#reauthenticate-mid-session) |
+| `No saved Bipa account matches --account …` (a pinned MCP server fails to start) | Run `bipa accounts` to list and identify saved accounts, then log in to the missing one or reinstall the server with the right `--account` |
+| `Your saved accounts changed while this command started` | Another command changed the default account; retry |
+| `… is saved twice` / `should hold Bipa user …` | A credential file was copied or edited by hand; follow the message to delete the extra file |
 
 ## Transaction Statuses
 
