@@ -77,7 +77,7 @@ Now the user can log in to Bipa CLI and connect their agent. After this, they on
 
 ```bash
 # Managed installer (recommended for users and agents)
-curl -fsSL https://agents.bipa.app/install.sh | sh
+curl -fsSL https://agents.bipa.app/install.sh | bash
 ```
 
 ## Authenticate
@@ -292,7 +292,7 @@ bipa mcp install --business                 # MCP server mcpsrv_bipa_business wi
   `requests cancel` while it is pending.
 - Keep the `idempotency_key` a write returns. After a timeout or 5xx, retry the same write with the
   same key (`--idempotency-key`, or the `idempotency_key` input); never with changed details.
-- MCP amounts are BRL cents in, `{min_units, decimal_scale}` out. Decide on the error `code`.
+- MCP amounts are BRL cents in, `{min_units, decimal_scale}` out, with `display` when the asset is known. Decide on the error `code`.
 - **Conversions, accepting a target order and savings movements run at once, with no approval.**
   Payments still wait for an approver; these do not. The key's creator chose its permissions:
   `conversions:execute` allows converting and accepting target orders, `savings:manage` allows
